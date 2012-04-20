@@ -1,0 +1,248 @@
+<?php
+
+function hosting_gitlab_menu() {
+	$items = array();
+	$items['hosting/gitlab-deploy'] = array(
+		'title' => 'Deploy',
+		'description' => 'Deploy a platform from a Git repository',
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('hosting_gitlab_deploy_form'),
+		'access arguments' => array('deploy from git'),
+		'menu_name' => 'primary-links',
+ 	);
+  $items['admin/settings/gitlab'] = array(
+  	'title' => 'GitLab',
+    'description' => 'Adminster GitLab deployment settings',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('hosting_gitlab_admin_form'),
+    'access arguments' => array('administer gitlab settings'),
+  );
+  $items['gitlab/repos/js'] = array(
+  	'title' => 'GitLab AHAH callback',
+    'page callback' => 'hosting_gitlab_ahah_callback_repos',
+    'access arguments' => array('deploy from git'),
+    'type' => MENU_CALLBACK,
+  );
+  return $items;
+}
+
+function hosting_gitlab_perm() {
+	return array('deploy from git', 'administer gitlab settings');
+}
+
+function hosting_gitlab_admin_form() {
+	$form = array();
+	$form['gitolite_path'] = array(
+		'#title' => 'Gitolite path',
+		'#type' => 'textfield',
+		'#description' => 'Absolute path to the Gitolite repositories folder',
+		'#default_value' => variable_get('gitolite_path', '/home/git/repositories'),
+	);
+	return system_settings_form($form);
+}
+
+function hosting_gitlab_get_repository_list() {
+	$files = file_scan_directory(variable_get('gitolite_path', '/home/git/repositories'),
+	  '.git', array('gitolite-admin.git'), 0, FALSE);
+	$output = array();
+	foreach ($files as $key => $repo) {
+		$output[$key] = $repo->basename;
+	}
+	return $output;
+}
+
+function hosting_gitlab_get_branch_options($repo) {
+	$branches = array();
+	exec("git --git-dir={$repo} branch -a", $branches);
+	$output = array();
+	foreach ($branches as $branch) {
+		$branch = substr($branch, 2);
+		$output[$branch] = $branch;
+	}
+	return $output;
+}
+
+function hosting_gitlab_get_tag_options($repo) {
+	$tags = array();
+	exec("git --git-dir={$repo} tag -l", $tags);
+	$output = array();
+	foreach ($tags as $tag) {
+	  $output[$tag] = $tag;
+	}
+	return $output;
+}
+
+function _hosting_gitlab_ahah_prepare_form() {
+  $form_state = array('storage' => NULL, 'submitted' => FALSE);
+  $form_build_id = $_POST['form_build_id'];
+  $form = form_get_cache($form_build_id, $form_state);
+  $args = $form['#parameters'];
+  $form_id = array_shift($args);
+  $form_state['post'] = $form['#post'] = $_POST;
+  $form_state['ahah_submission'] = TRUE;
+  $form['#programmed'] = $form['#redirect'] = FALSE;
+  drupal_process_form($form_id, $form, $form_state);
+  return drupal_rebuild_form($form_id, $form_state, $args, $form_build_id);
+}
+
+function hosting_gitlab_ahah_callback_repos() {
+  $form = _hosting_gitlab_ahah_prepare_form();
+  if (isset($form['tag'])) {
+	  $options = $form['tag'];
+  } else if (isset($form['branch'])) {
+	  $options = $form['branch'];
+  }
+  $output = theme('status_messages') . drupal_render($options);
+	drupal_json(array('status' => TRUE, 'data' => $output));
+}
+
+function hosting_gitlab_deploy_form(&$form_state) {
+	$form = array();
+  $repository_options = hosting_gitlab_get_repository_list();
+  $repository_value = isset($form_state['values']['repository']) 
+    ? $form_state['values']['repository'] : key($repository_options);
+
+  $vars['repos'] = $repository_options;
+  $vars['repo'] = $repository_value;
+
+  $servers = hosting_get_servers('http');
+  $server_value = isset($form_state['values']['web_server']) 
+    ? $form_state['values']['web_server'] : HOSTING_DEFAULT_WEB_SERVER;
+	$form['web_server'] = array(
+	  '#type' => 'radios',
+	  '#title' => t('Web server'),
+	  '#description' => t('The web server to build the platform on.'),
+	  '#options' => $servers,
+	  '#default_value' => $server_value,
+	  '#required' => TRUE,
+	);
+	$deploy_type_value = isset($form_state['values']['deploy_type']) ?
+	  $form_state['values']['deploy_type'] : 'branch';
+	$form['deploy_type'] = array(
+		'#type' => 'select',
+		'#title' => 'Deploy type',
+		'#options' => array('branch' => 'Branch', 'tag' => 'Tag'),
+		'#description' => 'Select to deploy from either the tip of a Git branch, or a specific tagged release',
+		'#default_value' => $deploy_type_value,
+		'#required' => TRUE,
+    '#ahah' => array(
+    	'event' => 'change',
+      'path' => 'gitlab/repos/js',
+      'wrapper' => 'gitlab-branch',
+      'method' => 'replace',
+    ),
+	);
+
+  $form['repository'] = array(
+	  '#required' => TRUE,
+  	'#type' => 'select',
+    '#title' => 'Repository',
+    '#options' => $repository_options,
+    '#default_value' => $repository_value,
+    '#ahah' => array(
+    	'event' => 'change',
+      'path' => 'gitlab/repos/js',
+      'wrapper' => 'gitlab-branch',
+      'method' => 'replace',
+    ),
+  );
+
+  if ($deploy_type_value == 'branch') {
+	  $branch_value = isset($form_state['values']['branch']) ? $form_state['values']['branch'] : '';
+	  $form['branch'] = array(
+	  	'#type' => 'select',
+	    '#title' => 'Branch',
+	    '#prefix' => '<div id="gitlab-branch">',
+	    '#suffix' => '</div>',
+	    '#options' => hosting_gitlab_get_branch_options($repository_value),
+	    '#default_value' => $branch_value,
+	  );
+  } else {
+	  $tag_value = isset($form_state['values']['tag']) ? $form_state['values']['tag'] : '';
+	  $form['tag'] = array(
+	  	'#type' => 'select',
+	    '#title' => 'Tag',
+	    '#prefix' => '<div id="gitlab-branch">',
+	    '#suffix' => '</div>',
+	    '#options' => hosting_gitlab_get_tag_options($repository_value),
+	    '#default_value' => $tag_value,
+	  );
+  }
+
+	$form['submit'] = array(
+		'#type' => 'submit',
+		'#value' => 'Submit',
+	);
+	return $form;
+}
+
+function hosting_gitlab_deploy_form_validate($form, &$form_state) {
+  if (!empty($form_state['ahah_submission'])) {
+    return;
+  }
+  if ($form_state['values']['deploy_type'] == 'branch' && empty($form_state['values']['branch'])) {
+	  form_set_error('branch', t('Branch is required for this deploy type.'));
+  }
+  if ($form_state['values']['deploy_type'] == 'tag' && empty($form_state['values']['tag'])) {
+	  form_set_error('branch', t('Tag is required for this deploy type.'));
+  }
+}
+
+function hosting_gitlab_deploy_form_submit($form, &$form_state) {
+  if (!empty($form_state['ahah_submission'])) {
+    return;
+  }
+	$repo = $form_state['values']['repository'];
+	$reponame = _hosting_gitlab_parse_repo_name($repo);
+	$type = $form_state['values']['deploy_type'];
+	$treeish = ($type == 'branch') ? $form_state['values']['branch'] : $form_state['values']['tag'];
+	$makefile = hosting_gitlab_fetch_distro_make($repo, $treeish);
+	if (empty($makefile)) {
+		drupal_set_message('Unable to build platform. An error occurred when fetching the distro.make file from the repository.', 'error');
+		return;
+	}
+	// Rewrite the distro make file to use correct branch or tag
+	$def = "\n\n; added by gitlab aegir deploy\nprojects[{$reponame}][download][{$type}] = \"{$treeish}\"\n";
+	file_put_contents($makefile, $def, FILE_APPEND);
+	
+	// Programmatically build platform node
+	$node_form_state = array();
+	module_load_include('inc', 'node', 'node.pages'); 
+	$node = array('type' => 'platform');
+	$node_form_state['values']['type'] = 'platform';
+	$node_form_state['values']['status'] = 1;
+	$node_form_state['values']['title'] = _hosting_gitlab_platform_name($repo, $treeish);
+	$node_form_state['values']['publish_path'] = '/var/aegir/platforms/' . _hosting_gitlab_platform_name($repo, $treeish);
+	$node_form_state['values']['makefile'] = $makefile;
+	$node_form_state['values']['web_server'] = $form_state['values']['web_server'];
+	global $user;
+	$node_form_state['values']['name'] = $user->name;
+	$node_form_state['values']['op'] = t('Save');
+	drupal_execute('platform_node_form', $node_form_state, (object) $node); 
+}
+
+function _hosting_gitlab_platform_name($repo, $treeish) {
+	$build_time = date('Ymd_His', $_SERVER['REQUEST_TIME']);
+	return substr($repo, strrpos($repo, '/') + 1, -4) .  '_' . $treeish . '_' . $build_time;
+}
+
+function _hosting_gitlab_parse_repo_name($repo) {
+	return substr($repo, strrpos($repo, '/') + 1, -4);
+}
+
+function hosting_gitlab_fetch_distro_make($repo, $treeish, $filename = 'distro.make') {
+	$makefile = array();
+	$output = file_directory_temp() . '/' . _hosting_gitlab_platform_name($repo, $treeish);
+	$command = "git --git-dir={$repo} show {$treeish}:{$filename} > {$output}";
+	exec($command, $makefile, $return);
+	if ($return != 0) {
+		return NULL;
+	} 
+	return $output;
+}
+
+
+
+
+
+

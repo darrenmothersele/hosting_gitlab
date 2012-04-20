@@ -1,0 +1,8 @@
+name = GitLab
+description = GitLab and Gitolite integration for Aegir
+core = 6.x
+package = Hosting
+dependencies[] = hosting_site
+dependencies[] = hosting_platform
+
+
