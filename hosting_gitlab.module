@@ -132,6 +132,11 @@ function hosting_gitlab_deploy_form(&$form_state) {
       'method' => 'replace',
     ),
   );
+  $form['deploy_working_copy'] = array(
+    '#type' => 'checkbox',
+    '#title' => 'Create as working copy',
+  );
+
 
   $form['repository'] = array(
     '#required' => TRUE,
@@ -214,6 +219,8 @@ function hosting_gitlab_deploy_form_submit($form, &$form_state) {
   $node_form_state['values']['title'] = _hosting_gitlab_platform_name($repo, $treeish);
   $node_form_state['values']['publish_path'] = '/var/aegir/platforms/' . _hosting_gitlab_platform_name($repo, $treeish);
   $node_form_state['values']['makefile'] = $makefile;
+  $node_form_state['values']['aegir_make_working_copy'] = 
+    (!empty($form_state['values']['deploy_working_copy'])) ? 1 : 0;
   $node_form_state['values']['web_server'] = $form_state['values']['web_server'];
   global $user;
   $node_form_state['values']['name'] = $user->name;

@@ -4,5 +4,5 @@ core = 6.x
 package = Hosting
 dependencies[] = hosting_site
 dependencies[] = hosting_platform
-
+dependencies[] = aegir_make_working_copy
 
